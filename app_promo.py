@@ -112,9 +112,12 @@ df_precos = df_precos.explode("_MERGE_KEY")
 
 df_precos["_MERGE_KEY"] = df_precos["_MERGE_KEY"].str.strip()
 df_precos["_MERGE_KEY"] = df_precos["_MERGE_KEY"].astype(str)
-# Remove colisões
+
+# Remove apenas colisões vindas da base de preços
 colisoes = set(df_skus.columns) & set(df_precos.columns)
 colisoes.discard("_MERGE_KEY")
+colisoes.discard(col_match_skus)  # <- ESSENCIAL
+
 df_skus_limpo = df_skus.drop(columns=list(colisoes))
 
 # Quebra IDs separados por vírgula
@@ -132,6 +135,10 @@ df_precos["_MERGE_KEY"] = (
     df_precos["_MERGE_KEY"]
     .str.strip()
 )
+
+df_skus["_MERGE_KEY"] = df_skus["_MERGE_KEY"].str.strip()
+df_precos["_MERGE_KEY"] = df_precos["_MERGE_KEY"].str.strip()
+
 # Merge seguro
 df_merged = df_skus_limpo.merge(df_precos, on="_MERGE_KEY", how="left")
 df_merged.drop(columns="_MERGE_KEY", inplace=True)
