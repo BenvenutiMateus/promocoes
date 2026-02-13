@@ -19,19 +19,6 @@ def ler_excel_promocao_com_formulas(file, sheet_name="PROMOÇÃO", header_row=0)
     return df
 
 
-def detectar_coluna_id(df):
-    possiveis = [
-        "id", "id anuncio", "id do anuncio", "id do anúncio",
-        "anuncio", "anúncio", "sku", "codigo", "código"
-    ]
-
-    for col in df.columns:
-        nome = str(col).lower().strip().replace("_", " ")
-        if nome in possiveis:
-            return col
-    return None
-
-
 # ================= APP =================
 
 st.set_page_config("Gerenciador de Promoções", layout="wide")
@@ -57,7 +44,7 @@ with st.sidebar:
         else ler_excel_promocao_com_formulas(arquivo_precos)
     )
 
-    # Limpeza da base de preços
+    # Limpeza base de preços
     colunas_remover = [
         "descrição", "descricao", "valor a receber", "peso",
         "frete", "taxa", "redução", "reducao", "bruto", "publicação"
@@ -65,13 +52,10 @@ with st.sidebar:
 
     df_precos = df_precos.loc[
         :,
-        [
-            c for c in df_precos.columns
-            if not any(r in c.lower() for r in colunas_remover)
-        ]
+        [c for c in df_precos.columns if not any(r in c.lower() for r in colunas_remover)]
     ]
 
-    # Remove marketplaces do df_skus
+    # Remove colunas de marketplace do df_skus
     marketplaces = ["mercado", "shopee", "shein", "magalu", "netshoes", "kwai", "tiktok", "mercado livre"]
     df_skus = df_skus.loc[
         :,
@@ -81,12 +65,13 @@ with st.sidebar:
     st.success("✅ Arquivos carregados")
 
     st.divider()
-    
-    # Match
-    col_match_skus = st.selectbox("Coluna de match (SKUs)", df_skus.columns)
-    col_match_precos = st.selectbox("Coluna de match (Preços)", [col for col in df_precos.columns if col.lower() not in marketplaces])
 
-    # Marketplace
+    col_match_skus = st.selectbox("Coluna de match (SKUs)", df_skus.columns)
+    col_match_precos = st.selectbox(
+        "Coluna de match (Preços)",
+        [c for c in df_precos.columns if c.lower() not in marketplaces]
+    )
+
     marketplace = st.selectbox(
         "Marketplace",
         ["Mercado Livre", "Shopee", "Shein", "Magalu"]
@@ -99,47 +84,47 @@ with st.sidebar:
 
 # ================= PROCESSAMENTO =================
 
-# Cria chaves temporárias
-df_skus["_MERGE_KEY"] = df_skus[col_match_skus].astype(str).str.replace("MLB", "").str.strip()
-df_precos["_MERGE_KEY"] = (
-    df_precos[col_match_precos]
+# 🔒 Coluna canônica de ID (NUNCA some)
+df_skus["ID_BASE"] = df_skus[col_match_skus]
+
+df_skus["_MERGE_KEY"] = (
+    df_skus[col_match_skus]
     .astype(str)
-    .str.replace("MLB", "")
-    .str.split(",")
-)
-
-df_precos = df_precos.explode("_MERGE_KEY")
-
-df_precos["_MERGE_KEY"] = df_precos["_MERGE_KEY"].str.strip()
-df_precos["_MERGE_KEY"] = df_precos["_MERGE_KEY"].astype(str)
-
-# Remove apenas colisões vindas da base de preços
-colisoes = set(df_skus.columns) & set(df_precos.columns)
-colisoes.discard("_MERGE_KEY")
-colisoes.discard(col_match_skus)  # <- ESSENCIAL
-
-df_skus_limpo = df_skus.drop(columns=list(colisoes))
-
-# Quebra IDs separados por vírgula
-df_precos["_MERGE_KEY"] = (
-    df_precos["_MERGE_KEY"]
-    .astype(str)
-    .str.split(",")
-)
-
-# Explode: 1 ID por linha
-df_precos = df_precos.explode("_MERGE_KEY")
-
-# Limpeza final
-df_precos["_MERGE_KEY"] = (
-    df_precos["_MERGE_KEY"]
+    .str.replace(r"\.0$", "", regex=True)  # remove .0 no final
+    .str.replace("MLB", "", regex=False)
     .str.strip()
 )
 
-df_skus["_MERGE_KEY"] = df_skus["_MERGE_KEY"].str.strip()
-df_precos["_MERGE_KEY"] = df_precos["_MERGE_KEY"].str.strip()
 
-# Merge seguro
+df_precos["_MERGE_KEY"] = (
+    df_precos[col_match_precos]
+    .astype(str)
+    .str.replace(r"\.0$", "", regex=True)  # remove .0 no final
+    .str.replace("MLB", "", regex=False)
+    .str.split(",")
+)
+
+
+# Explode IDs múltiplos
+df_precos = df_precos.explode("_MERGE_KEY")
+df_precos["_MERGE_KEY"] = df_precos["_MERGE_KEY"].replace(".0","", regex=False).str.strip()
+
+df_precos["_MERGE_KEY"] = (
+    df_precos["_MERGE_KEY"]
+    .astype(str)
+    .str.replace(r"\.0$", "", regex=True)
+    .str.strip()
+)
+
+
+# Remove colisões (preserva ID_BASE)
+colisoes = set(df_skus.columns) & set(df_precos.columns)
+colisoes.discard("_MERGE_KEY")
+colisoes.discard("ID_BASE")
+
+df_skus_limpo = df_skus.drop(columns=list(colisoes))
+
+# Merge
 df_merged = df_skus_limpo.merge(df_precos, on="_MERGE_KEY", how="left")
 df_merged.drop(columns="_MERGE_KEY", inplace=True)
 
@@ -147,13 +132,15 @@ df_merged.drop(columns="_MERGE_KEY", inplace=True)
 
 tab1, tab2, tab3 = st.tabs(["📋 Dados", "🔗 Match", "⬇️ Download"])
 
+# ---------- TAB 1 ----------
 with tab1:
     st.subheader("SKUs")
-    st.dataframe(df_skus.head(10), use_container_width=True)
+    st.dataframe(df_skus, use_container_width=True)
 
     st.subheader("Preços")
-    st.dataframe(df_precos.head(10), use_container_width=True)
+    st.dataframe(df_precos, use_container_width=True)
 
+# ---------- TAB 2 ----------
 with tab2:
     st.subheader("🔗 Resultado do Match")
 
@@ -161,19 +148,18 @@ with tab2:
     matched = df_merged[col_preco].notna().sum()
     nao_matched = df_merged[col_preco].isna().sum()
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total SKUs", total)
-    col2.metric("Matched", matched)
-    col3.metric("Não encontrados", nao_matched)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total SKUs", total)
+    c2.metric("Matched", matched)
+    c3.metric("Não encontrados", nao_matched)
 
     st.divider()
 
-    st.write("### 📌 Amostra geral (com match e sem match)")
+    st.write("### 📌 Amostra geral")
     st.dataframe(df_merged.head(20), use_container_width=True)
 
     st.divider()
 
-    # ================= NÃO ENCONTRADOS =================
     df_nao_encontrados = df_merged[df_merged[col_preco].isna()]
 
     if not df_nao_encontrados.empty:
@@ -181,27 +167,28 @@ with tab2:
 
         if st.checkbox("🔍 Mostrar apenas SKUs não encontrados"):
             st.dataframe(
-                df_nao_encontrados[[col_match_skus]],
+                df_nao_encontrados[["ID_BASE"]],
                 use_container_width=True
             )
     else:
         st.success("🎉 Todos os SKUs tiveram match!")
 
+# ---------- TAB 3 ----------
 with tab3:
     df_final = df_merged[df_merged[col_preco].notna()].copy()
-    df_final[col_preco] = pd.to_numeric(df_final[col_preco], errors="coerce")
-    df_final[col_preco] = df_final[col_preco].apply(lambda x: round(x, 2) if pd.notna(x) else x)
-    # Mantém apenas ID e preço do marketplace selecionado
-    df_export = df_final[[col_match_skus, col_preco]].copy()
 
-    # Renomeia colunas para ficar bonito no arquivo final
+    # Trata #REF!, texto, etc
+    df_final[col_preco] = pd.to_numeric(df_final[col_preco], errors="coerce")
+    df_final[col_preco] = df_final[col_preco].round(2)
+
+    df_export = df_final[["ID_BASE", col_preco]].copy()
+
     df_export = df_export.rename(columns={
-        col_match_skus: "ID",
+        "ID_BASE": "ID",
         col_preco: f"Preço {marketplace}"
     })
 
-
-    st.info(f"📊 {len(df_final)} registros prontos")
+    st.info(f"📊 {len(df_export)} registros prontos")
 
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
