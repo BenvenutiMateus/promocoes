@@ -101,8 +101,16 @@ with st.sidebar:
 
 # Cria chaves temporárias
 df_skus["_MERGE_KEY"] = df_skus[col_match_skus].astype(str).str.replace("MLB", "").str.strip()
-df_precos["_MERGE_KEY"] = df_precos[col_match_precos].astype(str).str.replace("MLB", "").str.strip()
+df_precos["_MERGE_KEY"] = (
+    df_precos[col_match_precos]
+    .astype(str)
+    .str.replace("MLB", "")
+    .str.split(",")
+)
 
+df_precos = df_precos.explode("_MERGE_KEY")
+
+df_precos["_MERGE_KEY"] = df_precos["_MERGE_KEY"].str.strip()
 # Remove colisões
 colisoes = set(df_skus.columns) & set(df_precos.columns)
 colisoes.discard("_MERGE_KEY")
