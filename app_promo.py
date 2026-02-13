@@ -111,6 +111,7 @@ df_precos["_MERGE_KEY"] = (
 df_precos = df_precos.explode("_MERGE_KEY")
 
 df_precos["_MERGE_KEY"] = df_precos["_MERGE_KEY"].str.strip()
+df_precos["_MERGE_KEY"] = df_precos["_MERGE_KEY"].astype(str)
 # Remove colisões
 colisoes = set(df_skus.columns) & set(df_precos.columns)
 colisoes.discard("_MERGE_KEY")
