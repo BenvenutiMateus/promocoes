@@ -24,6 +24,7 @@ def _normalize_merge_key(val):
     s = s.replace('.0', '')
     s = s.replace('MLB', '')
     s = s.replace('+T', '')
+    s = s.split()[0]  # Pega só a primeira parte antes de espaços
     s = s.strip()
     parts = [p.strip() for p in s.split('-') if p.strip()]
     lower = [p.lower() for p in parts]
