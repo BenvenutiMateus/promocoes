@@ -19,6 +19,21 @@ def ler_excel_promocao_com_formulas(file, sheet_name="PROMOÇÃO", header_row=0)
     return df
 
 
+def _normalize_merge_key(val):
+    s = str(val)
+    s = s.replace('.0', '')
+    s = s.replace('MLB', '')
+    s = s.replace('+T', '')
+    s = s.strip()
+    parts = [p.strip() for p in s.split('-') if p.strip()]
+    lower = [p.lower() for p in parts]
+    if any('kit' in p for p in lower):
+        take = parts[:3]
+    else:
+        take = parts[:2]
+    return '-'.join(take)
+
+
 # ================= APP =================
 
 st.set_page_config("Gerenciador de Promoções", layout="wide")
@@ -90,31 +105,23 @@ df_skus["ID_BASE"] = df_skus[col_match_skus]
 df_skus["_MERGE_KEY"] = (
     df_skus[col_match_skus]
     .astype(str)
-    .str.replace(r"\.0$", "", regex=True)  # remove .0 no final
-    .str.replace("MLB", "", regex=False)
-    .str.strip()
-)
+).apply(_normalize_merge_key)
 
 
 df_precos["_MERGE_KEY"] = (
     df_precos[col_match_precos]
     .astype(str)
-    .str.replace(r"\.0$", "", regex=True)  # remove .0 no final
+    .str.replace(r"\\.0$", "", regex=True)
     .str.replace("MLB", "", regex=False)
-    .str.split(",")
 )
+
+df_precos["_MERGE_KEY"] = df_precos["_MERGE_KEY"].str.split(",")
 
 
 # Explode IDs múltiplos
 df_precos = df_precos.explode("_MERGE_KEY")
-df_precos["_MERGE_KEY"] = df_precos["_MERGE_KEY"].replace(".0","", regex=False).str.strip()
-
-df_precos["_MERGE_KEY"] = (
-    df_precos["_MERGE_KEY"]
-    .astype(str)
-    .str.replace(r"\.0$", "", regex=True)
-    .str.strip()
-)
+df_precos["_MERGE_KEY"] = df_precos["_MERGE_KEY"].astype(str).str.replace(".0","", regex=False).str.strip()
+df_precos["_MERGE_KEY"] = df_precos["_MERGE_KEY"].apply(_normalize_merge_key)
 
 
 # Remove colisões (preserva ID_BASE)
