@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 from io import BytesIO
 from openpyxl import load_workbook
+import difflib
 
 # ================= FUNÇÕES =================
 
@@ -35,6 +36,49 @@ def _normalize_merge_key(val):
     return '-'.join(take)
 
 
+def _auto_detect_header_from_excel(file, sheet_name, max_rows=10):
+    try:
+        tmp = pd.read_excel(file, sheet_name=sheet_name, header=None, nrows=max_rows)
+    except Exception:
+        return 0
+
+    aliases = [
+        'skc', 'sku', 'número do item', 'numero do item', 'numero', 'número', 'item',
+        'id do anúncio', 'id do anuncio', 'id', 'ean', 'gtin', 'preço', 'preco', 'valor'
+    ]
+
+    for i in range(len(tmp)):
+        row = tmp.iloc[i].astype(str).str.lower().tolist()
+        matches = sum(any(a in c for a in aliases) for c in row)
+        if matches >= 1:
+            return i
+    return 0
+
+
+def _suggest_column(columns, aliases):
+    cols = list(columns)
+    lcols = [c.lower() for c in cols]
+
+    # exact
+    for a in aliases:
+        if a in lcols:
+            return cols[lcols.index(a)]
+
+    # contains
+    for idx, c in enumerate(lcols):
+        for a in aliases:
+            if a in c:
+                return cols[idx]
+
+    # fuzzy
+    for a in aliases:
+        m = difflib.get_close_matches(a, lcols, n=1)
+        if m:
+            return cols[lcols.index(m[0])]
+
+    return None
+
+
 # ================= APP =================
 
 st.set_page_config("Gerenciador de Promoções", layout="wide")
@@ -52,13 +96,75 @@ with st.sidebar:
         st.info("👆 Envie os dois arquivos")
         st.stop()
 
-    # Leitura
-    df_skus = pd.read_csv(arquivo_skus) if arquivo_skus.name.endswith("csv") else pd.read_excel(arquivo_skus)
-    df_precos = (
-        pd.read_csv(arquivo_precos)
-        if arquivo_precos.name.endswith("csv")
-        else ler_excel_promocao_com_formulas(arquivo_precos)
-    )
+    # --- Leitura com seleção de sheet / linha de header ---
+    st.sidebar.write("### Selecione sheet e linha de cabeçalho (quando aplicável)")
+
+    # SKUs file
+    if arquivo_skus.name.lower().endswith(("xls", "xlsx")):
+        xls_skus = pd.ExcelFile(arquivo_skus)
+        # Sugerir sheet: prioriza sheet com nome SKU, ID, PRODUTO, ITENS, ou a primeira
+        sheet_skus_sug = next((s for s in xls_skus.sheet_names if any(w in s.lower() for w in ["sku", "id", "produto", "itens"])), xls_skus.sheet_names[0])
+        idx_sug = xls_skus.sheet_names.index(sheet_skus_sug)
+        sheet_skus = st.selectbox("Sheet (SKUs)", xls_skus.sheet_names, index=idx_sug, key="sheet_skus")
+
+        # Sugerir header: busca linha com maior match de aliases
+        def _find_best_header(file, sheet, aliases, max_rows=10):
+            tmp = pd.read_excel(file, sheet_name=sheet, header=None, nrows=max_rows)
+            best = 0
+            best_score = 0
+            for i in range(len(tmp)):
+                row = tmp.iloc[i].astype(str).str.lower().tolist()
+                score = sum(any(a in c for a in aliases) for c in row)
+                if score > best_score:
+                    best = i
+                    best_score = score
+            return best
+
+        aliases_header = ["sku", "produto", "item", "skc", "número", "numero"]
+        header_skus_sug = _find_best_header(arquivo_skus, sheet_skus, aliases_header)
+        header_row_skus_1b = st.number_input("Linha do cabeçalho (SKUs) - 1-based, 0=auto", min_value=0, max_value=50, value=header_skus_sug+1, key="header_skus")
+        header_skus = header_row_skus_1b
+        df_skus = pd.read_excel(arquivo_skus, sheet_name=sheet_skus, header=header_skus)
+    else:
+        header_row_skus_1b = st.number_input("Linha do cabeçalho (SKUs) - 1-based, 0=auto (CSV)", min_value=0, max_value=50, value=0, key="header_skus_csv")
+        if header_row_skus_1b == 0:
+            df_skus = pd.read_csv(arquivo_skus)
+        else:
+            df_skus = pd.read_csv(arquivo_skus, header=header_row_skus_1b)
+
+    # Preços file
+    if arquivo_precos.name.lower().endswith(("xls", "xlsx")):
+        xls_precos = pd.ExcelFile(arquivo_precos)
+        # default to PROMOÇÃO sheet when present (case-insensitive)
+        def _find_default_sheet(names):
+            for i, s in enumerate(names):
+                if s.strip().lower() in ("promoção", "promocaO", "promocao"):
+                    return i
+                if s.strip().lower() in ("promoção", "promocao"):
+                    return i
+            return 0
+
+        default_idx = next((i for i, s in enumerate(xls_precos.sheet_names) if s.strip().lower() in ("promoção", "promocao")), 0)
+        sheet_precos = st.selectbox("Sheet (Preços)", xls_precos.sheet_names, index=default_idx, key="sheet_precos")
+        header_row_precos_1b = st.number_input("Linha do cabeçalho (Preços) - 1-based, 0=auto", min_value=0, max_value=50, value=0, key="header_precos")
+        if header_row_precos_1b == 0:
+            detected_p = _auto_detect_header_from_excel(arquivo_precos, sheet_precos)
+            header_precos = detected_p
+            st.sidebar.write(f"Detectado header em linha {detected_p+1} para Preços")
+        else:
+            header_precos = header_row_precos_1b - 1
+        # usamos a função que preserva fórmulas quando necessário
+        try:
+            df_precos = ler_excel_promocao_com_formulas(arquivo_precos, sheet_name=sheet_precos, header_row=header_precos)
+        except Exception:
+            df_precos = pd.read_excel(arquivo_precos, sheet_name=sheet_precos, header=header_precos)
+    else:
+        header_row_precos_1b = st.number_input("Linha do cabeçalho (Preços) - 1-based, 0=auto (CSV)", min_value=0, max_value=50, value=0, key="header_precos_csv")
+        if header_row_precos_1b == 0:
+            df_precos = pd.read_csv(arquivo_precos)
+        else:
+            df_precos = pd.read_csv(arquivo_precos, header=header_row_precos_1b - 1)
+
     # Normaliza nomes de colunas (remove espaços invisíveis)
     df_skus.columns = df_skus.columns.astype(str).str.strip()
     df_precos.columns = df_precos.columns.astype(str).str.strip()
@@ -73,17 +179,11 @@ with st.sidebar:
         "frete", "taxa", "redução", "reducao", "bruto", "publicação"
     ]
 
-    df_precos = df_precos.loc[
-        :,
-        [c for c in df_precos.columns if not any(r in c.lower() for r in colunas_remover)]
-    ]
+    df_precos = df_precos.loc[:, [c for c in df_precos.columns if not any(r in c.lower() for r in colunas_remover)]]
 
     # Remove colunas de marketplace do df_skus
     marketplaces = ["mercado", "shopee", "shein", "magalu", "netshoes", "kwai", "tiktok", "mercado livre"]
-    df_skus = df_skus.loc[
-        :,
-        [c for c in df_skus.columns if not any(m in c.lower() for m in marketplaces)]
-    ]
+    df_skus = df_skus.loc[:, [c for c in df_skus.columns if not any(m in c.lower() for m in marketplaces)]]
 
     st.success("✅ Arquivos carregados")
 
@@ -92,30 +192,88 @@ with st.sidebar:
     # Primeiro escolha o marketplace (necessário para decisões seguintes)
     marketplace = st.selectbox(
         "Marketplace",
-        ["Mercado Livre", "Shopee", "Shein", "Magalu","Netshoes", "Kwai", "TikTok", "Outro"]
+        ["Mercado Livre", "Shopee", "Shein", "Magalu","Netshoes", "Kwai", "TikTok", "Outro"],
+        key="marketplace_select"
     )
 
-    # Detecta 'Número do item' no arquivo da Shein (se existir, usamos como match)
-    num_item_col_detected = next(
-        (c for c in df_skus.columns if (("numero" in c.lower() or "número" in c.lower()) and "item" in c.lower())),
-        None
-    )
-    num_item_col = num_item_col_detected
-    if num_item_col_detected and marketplace.lower() == "shein":
-        st.sidebar.write(f"Detectado Número do item: {num_item_col_detected} — usando como coluna de match")
-        col_match_skus = num_item_col_detected
+    # --- Mapeamento de colunas (auto-sugestão básica) ---
+    st.sidebar.write("### Mapeamento de colunas (ajuste se necessário)")
+
+    # sugestões para SKUs
+    skc_aliases = ["skc"]
+    num_item_aliases = ["número do item", "numero do item", "item number", "item no", "numero item"]
+    sku_aliases = ["sku", "id do anúncio", "id do anuncio", "id", "seller id"]
+
+    # Recalcula sugestões sempre após leitura do df_skus
+    def _auto_suggest(df, aliases):
+        # Tenta por nome
+        col = _suggest_column(df.columns, aliases)
+        if col:
+            return col
+        # Tenta por conteúdo: procura coluna com valores que parecem SKU (alfanumérico, tamanho típico)
+        for c in df.columns:
+            vals = df[c].astype(str).str.upper().str.strip().dropna().unique()
+            if any(len(v) >= 6 and v.isalnum() for v in vals[:10]):
+                return c
+        return None
+
+    sugestao_num_item = _auto_suggest(df_skus, num_item_aliases)
+    sugestao_skc = _auto_suggest(df_skus, skc_aliases)
+    sugestao_sku = _auto_suggest(df_skus, sku_aliases)
+
+    # Mostra SKC / Número do item apenas para Shein
+    if marketplace.lower() == "shein":
+        col_skc_sel = st.selectbox(
+            "Coluna SKC (se existir)",
+            ["(nenhuma)"] + list(df_skus.columns),
+            index=(1 + list(df_skus.columns).index(sugestao_skc) if sugestao_skc in df_skus.columns else 0),
+            key="col_skc_sel"
+        )
+        col_num_item_sel = st.selectbox(
+            "Coluna Número do item (se existir)",
+            ["(nenhuma)"] + list(df_skus.columns),
+            index=(1 + list(df_skus.columns).index(sugestao_num_item) if sugestao_num_item in df_skus.columns else 0),
+            key="col_num_item_sel"
+        )
     else:
-        col_match_skus = st.selectbox("Coluna de match (SKUs)", df_skus.columns)
+        col_skc_sel = None
+        col_num_item_sel = None
 
+    col_match_skus = st.selectbox(
+        "Coluna de match (SKUs)",
+        list(df_skus.columns),
+        index=(list(df_skus.columns).index(sugestao_sku) if sugestao_sku in df_skus.columns else 0),
+        key="col_match_skus_map"
+    )
+
+    # sugestões para preços
+    price_aliases = ["preço", "preco", "valor", "price"]
+    sugestao_price = _suggest_column(df_precos.columns, price_aliases)
+    sugestao_precos_match = _suggest_column(df_precos.columns, sku_aliases + num_item_aliases)
+
+    colunas_match_precos = [c for c in df_precos.columns if not any(m in c.lower() for m in marketplaces)]
     col_match_precos = st.selectbox(
         "Coluna de match (Preços)",
-        [c for c in df_precos.columns if c.lower() not in marketplaces]
+        colunas_match_precos,
+        index=(colunas_match_precos.index(sugestao_precos_match) if sugestao_precos_match in colunas_match_precos else 0),
+        key="col_match_precos_map"
     )
-
     col_preco = st.selectbox(
         "Coluna de Preço",
-        [c for c in df_precos.columns if marketplace.lower() in c.lower()]
+        list(df_precos.columns),
+        index=(list(df_precos.columns).index(sugestao_price) if sugestao_price in df_precos.columns else 0),
+        key="col_preco_map"
     )
+
+    # Normaliza seleção de "(nenhuma)"
+    if col_skc_sel == "(nenhuma)":
+        col_skc_sel = None
+
+    # Exibe pré-visualizações rápidas para ajudar a confirmar mapeamento
+    st.sidebar.write("Preview SKUs:")
+    st.sidebar.dataframe(df_skus.head(5))
+    st.sidebar.write("Preview Preços:")
+    st.sidebar.dataframe(df_precos.head(5))
 
 # ================= PROCESSAMENTO =================
 
@@ -147,6 +305,19 @@ def _find_skc_col(df):
 
 num_item_col = _find_num_item_col(df_skus)
 skc_col = _find_skc_col(df_skus)
+
+# Se o usuário mapeou explicitamente na sidebar, priorizamos essa seleção
+try:
+    if 'col_num_item_sel' in locals() and col_num_item_sel and col_num_item_sel in df_skus.columns:
+        num_item_col = col_num_item_sel
+except Exception:
+    pass
+
+try:
+    if 'col_skc_sel' in locals() and col_skc_sel and col_skc_sel in df_skus.columns:
+        skc_col = col_skc_sel
+except Exception:
+    pass
 
 # Se estivermos trabalhando com Shein e o arquivo de SKUs contém o
 # "Número do item", então usamos essa coluna para gerar o _MERGE_KEY em
