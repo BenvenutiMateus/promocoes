@@ -202,7 +202,6 @@ with st.sidebar:
     df_precos, precos_renamed = _deduplicate_columns(df_precos)
 
     # Inicializa variáveis de detecção para evitar NameError
-    num_item_col = None
     skc_col = None
 
     # Limpeza base de preços
@@ -249,7 +248,6 @@ with st.sidebar:
                 return c
         return None
 
-    sugestao_num_item = _auto_suggest(df_skus, num_item_aliases)
     sugestao_skc = _auto_suggest(df_skus, skc_aliases)
     sugestao_sku = _auto_suggest(df_skus, sku_aliases)
 
@@ -261,15 +259,8 @@ with st.sidebar:
             index=(1 + list(df_skus.columns).index(sugestao_skc) if sugestao_skc in df_skus.columns else 0),
             key="col_skc_sel"
         )
-        col_num_item_sel = st.selectbox(
-            "Coluna Número do item (se existir)",
-            ["(nenhuma)"] + list(df_skus.columns),
-            index=(1 + list(df_skus.columns).index(sugestao_num_item) if sugestao_num_item in df_skus.columns else 0),
-            key="col_num_item_sel"
-        )
     else:
         col_skc_sel = None
-        col_num_item_sel = None
 
     col_match_skus = st.selectbox(
         "Coluna de match (SKUs)",
@@ -334,12 +325,6 @@ df_skus["_MERGE_KEY"] = (
 # Ajuste especial para Shein: prefira a coluna "Número do item" como chave de
 # agrupamento (isso agrupa variações pelo SKU pai). Também detectamos a
 # coluna `SKC` para uso no export quando disponível.
-def _find_num_item_col(df):
-    for c in df.columns:
-        lc = c.lower().strip()
-        if ("numero" in lc or "número" in lc) and "item" in lc:
-            return c
-    return None
 
 def _find_skc_col(df):
     for c in df.columns:
@@ -347,15 +332,9 @@ def _find_skc_col(df):
             return c
     return None
 
-num_item_col = _find_num_item_col(df_skus)
 skc_col = _find_skc_col(df_skus)
 
-# Se o usuário mapeou explicitamente na sidebar, priorizamos essa seleção
-try:
-    if 'col_num_item_sel' in locals() and col_num_item_sel and col_num_item_sel in df_skus.columns:
-        num_item_col = col_num_item_sel
-except Exception:
-    pass
+
 
 try:
     if 'col_skc_sel' in locals() and col_skc_sel and col_skc_sel in df_skus.columns:
@@ -363,16 +342,7 @@ try:
 except Exception:
     pass
 
-# Se estivermos trabalhando com Shein e o arquivo de SKUs contém o
-# "Número do item", então usamos essa coluna para gerar o _MERGE_KEY em
-# `df_skus` (para procurar no `df_precos`). Caso contrário mantemos o
-# comportamento padrão (usar a coluna selecionada em `col_match_skus`).
-if marketplace.lower() == "shein" and num_item_col and num_item_col in df_skus.columns:
-    df_skus["_MERGE_KEY"] = (
-        df_skus[num_item_col]
-        .astype(str)
-    ).apply(_normalize_merge_key)
-
+# Criar _MERGE_KEY em df_precos a partir da coluna selecionada
 df_precos["_MERGE_KEY"] = (
     df_precos[col_match_precos]
     .astype(str)
@@ -380,9 +350,8 @@ df_precos["_MERGE_KEY"] = (
     .str.replace("MLB", "", regex=False)
 )
 
+# Permite múltiplos IDs separados por vírgula
 df_precos["_MERGE_KEY"] = df_precos["_MERGE_KEY"].str.split(",")
-
-
 
 # Explode IDs múltiplos
 df_precos = df_precos.explode("_MERGE_KEY")
@@ -392,16 +361,11 @@ df_precos["_MERGE_KEY"] = df_precos["_MERGE_KEY"].apply(_normalize_merge_key)
 # Remove duplicidade: mantém apenas a primeira referência de cada _MERGE_KEY
 df_precos = df_precos.drop_duplicates(subset=["_MERGE_KEY"], keep="first")
 
-# Quando for Shein e houver `SKC`, vamos manter essa coluna para o export
-# (o merge usa `Número do item` como chave pai). `skc_col` já foi detectado
-# acima; se não existir, nada muda.
-
 # Opção: colapsar linhas idênticas por SKC (útil para Shein)
 collapse_skc = False
 collapse_post_merge = False
 if marketplace.lower() == "shein":
     # Mostrar quais colunas foram detectadas (ajuda debugging)
-    st.sidebar.write(f"Detectado Número do item: {num_item_col}")
     st.sidebar.write(f"Detectado SKC: {skc_col}")
     collapse_skc = st.sidebar.checkbox("Colapsar linhas idênticas por SKC", value=True)
 
@@ -430,7 +394,6 @@ if collapse_skc and marketplace.lower() == "shein":
         st.sidebar.info("ℹ️ SKC detectado apenas em SKUs — colapso será feito após o merge.")
     else:
         st.sidebar.warning("⚠️ SKC não detectado em SKUs nem em Preços — não foi possível colapsar por SKC.")
-
 
 # Remove colisões (preserva ID_BASE)
 colisoes = set(df_skus.columns) & set(df_precos.columns)
