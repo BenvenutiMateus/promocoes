@@ -348,6 +348,9 @@ df_precos["_MERGE_KEY"] = (
     .astype(str)
     .str.replace(r"\\.0$", "", regex=True)
     .str.replace("MLB", "", regex=False)
+    .str.replace("+T", "", regex=False)
+    .str.replace("-1-", "-", regex=False)
+    .str.replace("-2-", "-", regex=False)
 )
 
 # Permite múltiplos IDs separados por vírgula
