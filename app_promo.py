@@ -25,6 +25,11 @@ def _normalize_merge_key(val):
     s = s.replace('.0', '')
     s = s.replace('MLB', '')
     s = s.replace('+T', '')
+    s = s.replace("+T", "", regex=False)
+    s = s.replace("-1-", "-", regex=False)
+    s = s.replace("-2-", "-", regex=False)
+    s = s.replace("AB", "BC", regex=False)
+    s = s.replace("SAN", "BC", regex=False)
     s = s.split()[0]  # Pega só a primeira parte antes de espaços
     s = s.strip()
     parts = [p.strip() for p in s.split('-') if p.strip()]
@@ -347,10 +352,6 @@ df_precos["_MERGE_KEY"] = (
     df_precos[col_match_precos]
     .astype(str)
     .str.replace(r"\\.0$", "", regex=True)
-    .str.replace("MLB", "", regex=False)
-    .str.replace("+T", "", regex=False)
-    .str.replace("-1-", "-", regex=False)
-    .str.replace("-2-", "-", regex=False)
 )
 
 # Permite múltiplos IDs separados por vírgula
