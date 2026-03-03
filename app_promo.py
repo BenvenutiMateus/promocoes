@@ -25,11 +25,11 @@ def _normalize_merge_key(val):
     s = s.replace('.0', '')
     s = s.replace('MLB', '')
     s = s.replace('+T', '')
-    s = s.replace("+T", "", regex=False)
-    s = s.replace("-1-", "-", regex=False)
-    s = s.replace("-2-", "-", regex=False)
-    s = s.replace("AB", "BC", regex=False)
-    s = s.replace("SAN", "BC", regex=False)
+    s = s.replace("+T", "")
+    s = s.replace("-1-", "-")
+    s = s.replace("-2-", "-")
+    s = s.replace("AB", "BC")
+    s = s.replace("SAN", "BC")
     s = s.split()[0]  # Pega só a primeira parte antes de espaços
     s = s.strip()
     parts = [p.strip() for p in s.split('-') if p.strip()]
