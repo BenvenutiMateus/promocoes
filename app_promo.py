@@ -469,7 +469,7 @@ with tab2:
 
         if st.checkbox("🔍 Mostrar apenas SKUs não encontrados"):
             st.dataframe(
-                df_nao_encontrados[["ID_BASE"]],
+                df_nao_encontrados,
                 use_container_width=True
             )
     else:
@@ -477,10 +477,12 @@ with tab2:
 
 # ---------- TAB 3 ----------
 with tab3:
-    df_final = df_merged[df_merged[col_preco].notna()].copy()
+    df_final = df_merged.copy()
 
     # Trata #REF!, texto, etc
     df_final[col_preco] = pd.to_numeric(df_final[col_preco], errors="coerce")
+    # Preenche valores não encontrados com 0
+    df_final[col_preco] = df_final[col_preco].fillna(0)
     df_final[col_preco] = df_final[col_preco].round(2)
 
     # Para Shein: se detectamos a coluna `SKC`, exportamos `SKC` + preço de campanha
