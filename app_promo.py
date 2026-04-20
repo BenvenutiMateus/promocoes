@@ -105,6 +105,29 @@ def _deduplicate_columns(df):
 
     return df, renamed
 
+def _deduplicate_columns(df):
+    counts = {}
+    new_columns = []
+    renamed = {}
+
+    for col in df.columns:
+        base = str(col).strip()
+        counts[base] = counts.get(base, 0) + 1
+        if counts[base] == 1:
+            new_columns.append(base)
+            continue
+
+        new_name = f"{base}__{counts[base]}"
+        new_columns.append(new_name)
+        renamed.setdefault(base, []).append(new_name)
+
+    if renamed:
+        df = df.copy()
+        df.columns = new_columns
+
+    return df, renamed
+
+
 # ================= APP =================
 
 st.set_page_config("Gerenciador de Promoções", layout="wide")
@@ -205,6 +228,15 @@ with st.sidebar:
         # Evita erro no Streamlit/PyArrow com nomes de coluna duplicados
     df_skus, skus_renamed = _deduplicate_columns(df_skus)
     df_precos, precos_renamed = _deduplicate_columns(df_precos)
+
+    # Evita erro no Streamlit/PyArrow com nomes de coluna duplicados
+    df_skus, skus_renamed = _deduplicate_columns(df_skus)
+    df_precos, precos_renamed = _deduplicate_columns(df_precos)
+
+    if skus_renamed:
+        st.sidebar.warning("Foram detectadas colunas duplicadas na planilha de SKUs. Ajustamos os nomes automaticamente.")
+    if precos_renamed:
+        st.sidebar.warning("Foram detectadas colunas duplicadas na base de preços. Ajustamos os nomes automaticamente.")
 
     # Inicializa variáveis de detecção para evitar NameError
     skc_col = None
